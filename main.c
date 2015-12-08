@@ -9,29 +9,36 @@
 
 #include <avro.h>
 #include <zlib.h>
-#include <lua.h>
+#include <luajit.h>
+#include <lauxlib.h>
 #include <parson.h>
 
 #define CHUNK 4 * 1024 * 1024
 
+#define LUA_CB_TYPE_INLINE 0
+#define LUA_CB_TYPE_SCRIPT 1
+
 typedef void (*record_cb)(avro_value_t, void*);
 
-static int read_long(avro_reader_t reader, int64_t * l)
+typedef struct {
+    lua_State *L;
+    uint8_t type, cb_ref;
+    char *inline_script;
+    char *script_path;
+} lua_callback;
+
+void read_varint(avro_reader_t reader, int64_t *res)
 {
-	uint64_t value = 0;
-	uint8_t b;
-	int offset = 0;
-	do {
-		if (offset == 10) {
-            return -1;
-		}
-		avro_read(reader, &b, 1);
-		value |= (int64_t) (b & 0x7F) << (7 * offset);
-		++offset;
-	}
-	while (b & 0x80);
-	*l = ((value >> 1) ^ -(value & 1));
-	return 0;
+    uint64_t value = 0;
+    uint8_t b;
+    int offset = 0;
+    do {
+        avro_read(reader, &b, 1);
+        value |= (int64_t) (b & 0x7F) << (7 * offset);
+        ++offset;
+    }
+    while (b & 0x80);
+    *res = ((value >> 1) ^ -(value & 1));
 }
 
 JSON_Value *value_to_json(avro_value_t value) {
@@ -40,32 +47,6 @@ JSON_Value *value_to_json(avro_value_t value) {
     JSON_Value *val = json_parse_string(strval);
     free(strval);
     return val;
-}
-
-int deflate_(const char *src, const char *dst, size_t *sz) {
-    int ret = 0;
-    z_stream stream;
-
-    size_t len = strlen(src) + 1;
-
-    stream.zalloc = (voidpf)0;
-    stream.zfree = (voidpf)0;
-    stream.opaque = (voidpf)0;
-    ret = deflateInit(&stream, Z_BEST_SPEED);
-    if (ret != Z_OK) {
-        return ret;
-    }
-    stream.avail_in = (uInt)len;
-    stream.next_in = (Bytef *)src;
-
-    stream.avail_out = CHUNK;
-    stream.next_out = (Bytef *)dst;
-    ret = deflate(&stream, Z_FINISH);
-    deflateEnd(&stream);
-
-    *sz = stream.total_out;
-
-    return ret;
 }
 
 int inflate_(const char *src, char *dst, size_t len, size_t *out_len) {
@@ -91,7 +72,7 @@ int inflate_(const char *src, char *dst, size_t len, size_t *out_len) {
 
 // core
 
-// zerocopy file reader
+// custom file reader
 void read_avro_file2(const char *filename, record_cb cb, void *user_data) {
     struct stat st;
     char sync[16], codec_name[11], magic[4];
@@ -148,8 +129,8 @@ void read_avro_file2(const char *filename, record_cb cb, void *user_data) {
         int64_t blocks, size, blocks_total = 0;
         size_t out_size, out_size_total = 0;
         while (avro_read(reader, sync, sizeof(sync)) == 0) {
-            read_long(reader, &blocks);
-            read_long(reader, &size);
+            read_varint(reader, &blocks);
+            read_varint(reader, &size);
             avro_read(reader, in, size);
             inflate_(in, out + out_size_total, size, &out_size);
             out_size_total += out_size;
@@ -239,44 +220,185 @@ void field_printer(avro_value_t record, char *field_name) {
     json_value_free(val);
 }
 
-void lua_exec_script(avro_value_t record, char *script_name) {
+void push_avro_value(lua_State *L, avro_value_t *value) {
+    switch (avro_value_get_type(value)) {
+    case AVRO_BOOLEAN:
+    {
+        int val = 0;
+        avro_value_get_boolean(value, &val);
+        lua_pushboolean(L, val);
+        break;
+    }
 
+    case AVRO_DOUBLE:
+    {
+        double val = 0;
+        avro_value_get_double(value, &val);
+        lua_pushnumber(L, val);
+        break;
+    }
+
+    case AVRO_FLOAT:
+    {
+        float val = 0;
+        avro_value_get_float(value, &val);
+        lua_pushnumber(L, val);
+        break;
+    }
+
+    case AVRO_INT32:
+    {
+        int32_t val = 0;
+        avro_value_get_int(value, &val);
+        lua_pushnumber(L, val);
+        break;
+    }
+
+    case AVRO_INT64:
+    {
+        int64_t val = 0;
+        avro_value_get_long(value, &val);
+        lua_pushnumber(L, val);
+        break;
+    }
+
+    case AVRO_NULL:
+    {
+        lua_pushnil(L);
+        break;
+    }
+
+    case AVRO_STRING:
+    {
+        const char *val = NULL;
+        size_t size = 0;
+        avro_value_get_string(value, &val, &size);
+        lua_pushlstring(L, val, size);
+        break;
+    }
+
+    case AVRO_ARRAY:
+    case AVRO_ENUM:
+    case AVRO_FIXED:
+    case AVRO_MAP:
+    {
+        lua_pushstring(L, "unsupported type");
+        break;
+    }
+
+    case AVRO_RECORD:
+    {
+        size_t field_count = 0;
+        avro_value_get_size(value, &field_count);
+
+        lua_newtable(L);
+        for (int i = 0; i < field_count; i++) {
+            const char *field_name = NULL;
+            avro_value_t field;
+            avro_value_get_by_index(value, i, &field, &field_name);
+            lua_pushstring(L, field_name);
+            push_avro_value(L, &field);
+            lua_settable(L, -3);
+        }
+        break;
+    }
+    case AVRO_UNION:
+    {
+        avro_value_t branch;
+        avro_value_get_current_branch(value, &branch);
+        if (avro_value_get_type(&branch) == AVRO_NULL) {
+            lua_pushnil(L);
+        } else {
+            push_avro_value(L, &branch);
+        }
+        break;
+    }
+    }
 }
 
-void lua_exec_inline(avro_value_t record, char *inline_script) {
+void lua_script(avro_value_t record, lua_callback *cb_data) {
+    // TODO: push avro record as lua table
 
+    if (cb_data->type == LUA_CB_TYPE_INLINE) {
+        push_avro_value(cb_data->L, &record);
+        lua_setglobal(cb_data->L, "r");
+        luaL_dostring(cb_data->L, cb_data->inline_script);
+    } else if (cb_data->type == LUA_CB_TYPE_SCRIPT) {
+        lua_rawgeti(cb_data->L, LUA_REGISTRYINDEX, cb_data->cb_ref);
+        push_avro_value(cb_data->L, &record);
+        lua_call(cb_data->L, 1, 0);
+    }
+}
+
+void _init_lua_cb(lua_callback *cb_data) {
+    cb_data->L = luaL_newstate();
+    luaL_openlibs(cb_data->L);
+    luaJIT_setmode(cb_data->L, 0, LUAJIT_MODE_ENGINE | LUAJIT_MODE_ON);
+}
+
+void init_lua_cb_script(lua_callback *cb_data, const char *script_path) {
+    _init_lua_cb(cb_data);
+    cb_data->type = LUA_CB_TYPE_SCRIPT;
+    cb_data->script_path = strdup(script_path);
+    luaL_dofile(cb_data->L, cb_data->script_path);
+    cb_data->cb_ref = luaL_ref(cb_data->L, LUA_REGISTRYINDEX);
+}
+
+void init_lua_cb_inline(lua_callback *cb_data, const char *inline_script) {
+    _init_lua_cb(cb_data);
+    cb_data->type = LUA_CB_TYPE_INLINE;
+    cb_data->inline_script = strdup(inline_script);
+}
+
+void free_lua_cb(lua_callback *cb_data) {
+    lua_close(cb_data->L);
+    if (cb_data->type == LUA_CB_TYPE_SCRIPT) free(cb_data->script_path);
+    else if (cb_data->type == LUA_CB_TYPE_INLINE) free(cb_data->inline_script);
 }
 
 int main(int argc, char **argv) {
+    char *filename, *handler, *param;
+
     if (argc < 2) {
-        puts("invalid filename");
+        puts("invalid avro filename.");
         return 1;
     }
+    filename = argv[1];
 
     if (argc < 3) {
-        puts("invalid field");
+        puts("invalid handler: lua_inline, lua_script, field_print, dump.");
         return 1;
+    }
+    handler = argv[2];
+
+    if (strcmp(handler, "dump") == 0) {
+        read_avro_file2(filename, &dump_avro_value, NULL);
+        return 0;
     }
 
     if (argc < 4) {
-        puts("invalid reader");
+        puts("invalid handler param.");
         return 1;
     }
+    param = argv[3];
 
-    char *filename = argv[1];
-    char *fieldname = argv[2];
-    char *reader = argv[3];
-
-    if (strcmp(reader, "default") == 0) {
-        printf("[%s] reading %s(%s)\n", reader, filename, fieldname);
-        /* read_avro_file(filename, (record_cb)&dump_avro_value, NULL); */
-        read_avro_file(filename, (record_cb)&field_printer, fieldname);
-    } else if (strcmp(reader, "zeroc") == 0){
-        printf("[%s] reading %s(%s)\n", reader, filename, fieldname);
-        /* read_avro_file2(filename, (record_cb)&dump_avro_value, NULL); */
-        read_avro_file2(filename, (record_cb)&field_printer, fieldname);
-    } else {
-        puts("valid readers: default, zeroc");
+    if (strcmp(handler, "field_print") == 0) {
+        read_avro_file2(filename, &field_printer, param);
+        return 0;
     }
+
+    lua_callback cb;
+    if (strcmp(handler, "lua_inline") == 0) {
+        init_lua_cb_inline(&cb, param);
+    } else if (strcmp(handler, "lua_script") == 0) {
+        if (access(param, F_OK) == -1) {
+            puts("invalid lua script file.");
+            return 1;
+        }
+        init_lua_cb_script(&cb, param);
+    }
+    read_avro_file2(filename, &lua_script, &cb);
+    free_lua_cb(&cb);
+
     return 0;
 }

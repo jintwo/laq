@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <getopt.h>
 #include <ctype.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -356,49 +357,104 @@ void free_lua_cb(lua_callback *cb_data) {
     else if (cb_data->type == LUA_CB_TYPE_INLINE) free(cb_data->inline_script);
 }
 
-int main(int argc, char **argv) {
-    char *filename, *handler, *param;
+typedef struct {
+    char *input, *handler, *param;
+} options;
 
-    if (argc < 2) {
+options * new_options() {
+    options *opts = malloc(sizeof(options));
+    opts->input = NULL;
+    opts->handler = NULL;
+    opts->param = NULL;
+    return opts;
+}
+
+void free_options(options *opts) {
+    free(opts->input);
+    free(opts->handler);
+    free(opts->param);
+}
+
+int parse_opts(int argc, char **argv, options *opts) {
+    int c = 0;
+    while (1) {
+        static struct option long_options[] = {
+            {"input", required_argument, 0, 'i'},
+            {"handler", required_argument, 0, 'c'},
+            {"param", required_argument, 0, 'p'},
+            {0, 0, 0, 0}
+        };
+
+        int opt_index = 0;
+        c = getopt_long(argc, argv, "i:c:p:", long_options, &opt_index);
+
+        if (c == -1)
+            break;
+
+        switch (c) {
+        case 'i':
+            opts->input = strdup(optarg);
+            break;
+        case 'c':
+            opts->handler = strdup(optarg);
+            break;
+        case 'p':
+            opts->param = strdup(optarg);
+            break;
+        default:
+            printf("usage: %s -i AVRO_FILE -c [lua_inline|lua_script|field_print|dump] [-p HANDLER_PARAM]\n", argv[0]);
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+int main(int argc, char **argv) {
+    options *opts = new_options();
+
+    if (parse_opts(argc, argv, opts) != 0) {
+        return 1;
+    }
+
+    if (!opts->input) {
         puts("invalid avro filename.");
         return 1;
     }
-    filename = argv[1];
 
-    if (argc < 3) {
-        puts("invalid handler: lua_inline, lua_script, field_print, dump.");
+    if (!opts->handler) {
+        puts("invalid handler.");
         return 1;
     }
-    handler = argv[2];
 
-    if (strcmp(handler, "dump") == 0) {
-        read_avro_file2(filename, &dump_avro_value, NULL);
+    if (strcmp(opts->handler, "dump") == 0) {
+        read_avro_file2(opts->input, &dump_avro_value, NULL);
         return 0;
     }
 
-    if (argc < 4) {
+    if (!opts->param) {
         puts("invalid handler param.");
         return 1;
     }
-    param = argv[3];
 
-    if (strcmp(handler, "field_print") == 0) {
-        read_avro_file2(filename, &field_printer, param);
+    if (strcmp(opts->handler, "field_print") == 0) {
+        read_avro_file2(opts->input, &field_printer, opts->param);
         return 0;
     }
 
     lua_callback cb;
-    if (strcmp(handler, "lua_inline") == 0) {
-        init_lua_cb_inline(&cb, param);
-    } else if (strcmp(handler, "lua_script") == 0) {
-        if (access(param, F_OK) == -1) {
+    if (strcmp(opts->handler, "lua_inline") == 0) {
+        init_lua_cb_inline(&cb, opts->param);
+    } else if (strcmp(opts->handler, "lua_script") == 0) {
+        if (access(opts->param, F_OK) == -1) {
             puts("invalid lua script file.");
             return 1;
         }
-        init_lua_cb_script(&cb, param);
+        init_lua_cb_script(&cb, opts->param);
     }
-    read_avro_file2(filename, &lua_script, &cb);
+    read_avro_file2(opts->input, &lua_script, &cb);
     free_lua_cb(&cb);
 
+    free_options(opts);
     return 0;
 }

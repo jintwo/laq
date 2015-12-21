@@ -38,3 +38,7 @@ CMakeScripts
 Makefile
 cmake_install.cmake
 install_manifest.txt
+
+# project
+laq
+*.avro

@@ -13,7 +13,12 @@
 #include <luajit.h>
 #include <lualib.h>
 #include <lauxlib.h>
+
+#ifdef WITH_PARSON
 #include <parson.h>
+#else
+#include <jansson.h>
+#endif
 
 #define CHUNK 4 * 1024 * 1024
 
@@ -43,6 +48,7 @@ void read_varint(avro_reader_t reader, int64_t *res)
     *res = ((value >> 1) ^ -(value & 1));
 }
 
+#ifdef WITH_PARSON
 JSON_Value *value_to_json(avro_value_t value) {
     char *strval = NULL;
     avro_value_to_json(&value, 1, &strval);
@@ -50,6 +56,16 @@ JSON_Value *value_to_json(avro_value_t value) {
     free(strval);
     return val;
 }
+#else
+json_t *value_to_json(avro_value_t value) {
+    char *strval = NULL;
+    avro_value_to_json(&value, 1, &strval);
+    json_error_t err;
+    json_t *val = json_loads(strval, 0, &err);
+    free(strval);
+    return val;
+}
+#endif
 
 int inflate_(const char *src, char *dst, size_t len, size_t *out_len) {
     int ret = 0;
@@ -202,6 +218,7 @@ void dump_avro_value(avro_value_t value, void *ignored) {
     free(strval);
 }
 
+#ifdef WITH_PARSON
 void field_printer(avro_value_t record, char *field_name) {
     JSON_Value *val = value_to_json(record);
     JSON_Object *obj = json_value_get_object(val);
@@ -221,6 +238,13 @@ void field_printer(avro_value_t record, char *field_name) {
     }
     json_value_free(val);
 }
+#else
+void field_printer(avro_value_t record, char *field_name) {
+    json_t *val = value_to_json(record);
+    printf("%s: Not implemented\n", field_name);
+    json_decref(val);
+}
+#endif
 
 void push_avro_value(lua_State *L, avro_value_t *value) {
     switch (avro_value_get_type(value)) {

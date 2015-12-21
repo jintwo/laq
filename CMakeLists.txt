@@ -3,7 +3,7 @@ project(laq)
 
 set(CMAKE_BUILD_TYPE Debug)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -gp -std=c99")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c99")
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
   set(CMAKE_EXE_LINKER_FLAGS "-pagezero_size 10000 -image_base 100000000")
@@ -27,4 +27,4 @@ link_directories(vendor/LuaJIT-2.0.4/src)
 
 set(SOURCE_FILES vendor/parson/parson.c main.c)
 add_executable(laq ${SOURCE_FILES})
-target_link_libraries(laq m luajit dl avro z)
+target_link_libraries(laq luajit m dl avro z)

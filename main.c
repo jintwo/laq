@@ -11,6 +11,7 @@
 #include <avro.h>
 #include <zlib.h>
 #include <luajit.h>
+#include <lualib.h>
 #include <lauxlib.h>
 #include <parson.h>
 

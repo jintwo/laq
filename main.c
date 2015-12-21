@@ -402,7 +402,7 @@ int parse_opts(int argc, char **argv, options *opts) {
             opts->param = strdup(optarg);
             break;
         default:
-            printf("usage: %s -i AVRO_FILE -c [lua_inline|lua_script|field_print|dump] [-p HANDLER_PARAM]\n", argv[0]);
+            printf("usage: %s -i AVRO_FILE -c [lua_inline|lua_script|field_print|cat] [-p HANDLER_PARAM]\n", argv[0]);
             return 1;
         }
     }
@@ -427,7 +427,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    if (strcmp(opts->handler, "dump") == 0) {
+    if (strcmp(opts->handler, "cat") == 0) {
         read_avro_file2(opts->input, &dump_avro_value, NULL);
         return 0;
     }

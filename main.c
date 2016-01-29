@@ -7,6 +7,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <limits.h>
 
 #include <avro.h>
 #include <zlib.h>
@@ -33,6 +34,26 @@ typedef struct {
     char *inline_script;
     char *script_path;
 } lua_callback;
+
+typedef struct {
+    char *input, *handler, *param;
+    int count;
+} options;
+
+options* new_options() {
+    options *opts = malloc(sizeof(options));
+    opts->input = NULL;
+    opts->handler = NULL;
+    opts->param = NULL;
+    opts->count = INT_MAX;
+    return opts;
+}
+
+void free_options(options *opts) {
+    free(opts->input);
+    free(opts->handler);
+    free(opts->param);
+}
 
 void read_varint(avro_reader_t reader, int64_t *res)
 {
@@ -91,7 +112,7 @@ int inflate_(const char *src, char *dst, size_t len, size_t *out_len) {
 // core
 
 // custom file reader
-void read_avro_file2(const char *filename, record_cb cb, void *user_data) {
+void read_avro_file2(const char *filename, record_cb cb, void *user_data, int count) {
     struct stat st;
     char sync[16], codec_name[11], magic[4];
     size_t size = 0;
@@ -163,6 +184,9 @@ void read_avro_file2(const char *filename, record_cb cb, void *user_data) {
         for (int i = 0; i < blocks_total; i++) {
             avro_value_read(block_reader, &value);
             cb(value, user_data);
+            if (--count <= 0) {
+                break;
+            }
         }
         avro_reader_free(block_reader);
 
@@ -294,6 +318,7 @@ void push_avro_value(lua_State *L, avro_value_t *value) {
         break;
     }
 
+    case AVRO_BYTES:
     case AVRO_STRING:
     {
         const char *val = NULL;
@@ -382,24 +407,6 @@ void free_lua_cb(lua_callback *cb_data) {
     else if (cb_data->type == LUA_CB_TYPE_INLINE) free(cb_data->inline_script);
 }
 
-typedef struct {
-    char *input, *handler, *param;
-} options;
-
-options * new_options() {
-    options *opts = malloc(sizeof(options));
-    opts->input = NULL;
-    opts->handler = NULL;
-    opts->param = NULL;
-    return opts;
-}
-
-void free_options(options *opts) {
-    free(opts->input);
-    free(opts->handler);
-    free(opts->param);
-}
-
 int parse_opts(int argc, char **argv, options *opts) {
     int c = 0;
     while (1) {
@@ -407,11 +414,12 @@ int parse_opts(int argc, char **argv, options *opts) {
             {"input", required_argument, 0, 'i'},
             {"handler", required_argument, 0, 'c'},
             {"param", required_argument, 0, 'p'},
+            {"count", required_argument, 0, 'n'},
             {0, 0, 0, 0}
         };
 
         int opt_index = 0;
-        c = getopt_long(argc, argv, "i:c:p:", long_options, &opt_index);
+        c = getopt_long(argc, argv, "i:c:p:n:", long_options, &opt_index);
 
         if (c == -1)
             break;
@@ -426,8 +434,17 @@ int parse_opts(int argc, char **argv, options *opts) {
         case 'p':
             opts->param = strdup(optarg);
             break;
+        case 'n':
+            opts->count = atoi(optarg);
+            break;
         default:
-            printf("usage: %s -i AVRO_FILE -c [lua_inline|lua_script|field_print|cat] [-p HANDLER_PARAM]\n", argv[0]);
+            printf(
+                "usage: %s\
+\n\t-i AVRO_FILE\
+\n\t-c [lua_inline|lua_script|field_print|cat]\
+\n\t[-p HANDLER_PARAM]\
+\n\t[-n RECORDS_COUNT]\n", argv[0]);
+
             return 1;
         }
     }
@@ -453,7 +470,7 @@ int main(int argc, char **argv) {
     }
 
     if (strcmp(opts->handler, "cat") == 0) {
-        read_avro_file2(opts->input, &dump_avro_value, NULL);
+        read_avro_file2(opts->input, &dump_avro_value, NULL, opts->count);
         return 0;
     }
 
@@ -463,7 +480,7 @@ int main(int argc, char **argv) {
     }
 
     if (strcmp(opts->handler, "field_print") == 0) {
-        read_avro_file2(opts->input, &field_printer, opts->param);
+        read_avro_file2(opts->input, &field_printer, opts->param, opts->count);
         return 0;
     }
 
@@ -477,7 +494,7 @@ int main(int argc, char **argv) {
         }
         init_lua_cb_script(&cb, opts->param);
     }
-    read_avro_file2(opts->input, &lua_script, &cb);
+    read_avro_file2(opts->input, &lua_script, &cb, opts->count);
     free_lua_cb(&cb);
 
     free_options(opts);

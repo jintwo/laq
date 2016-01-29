@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <getopt.h>
+#include <glob.h>
 #include <ctype.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -21,7 +22,7 @@
 #include <jansson.h>
 #endif
 
-#define CHUNK 4 * 1024 * 1024
+#define CHUNK 10 * 1024 * 1024
 
 #define LUA_CB_TYPE_INLINE 0
 #define LUA_CB_TYPE_SCRIPT 1
@@ -502,9 +503,15 @@ int main(int argc, char **argv) {
         }
         init_lua_cb_script(&cb, opts->param);
     }
-    read_avro_file2(opts->input, &lua_script, &cb, opts->count);
-    free_lua_cb(&cb);
 
+    glob_t glob_results;
+    glob(opts->input, GLOB_NOCHECK, 0, &glob_results);
+
+    for (char **p = glob_results.gl_pathv, c = glob_results.gl_pathc; c; p++, c--) {
+        read_avro_file2(*p, &lua_script, &cb, opts->count);
+    }
+
+    free_lua_cb(&cb);
     free_options(opts);
     return 0;
 }

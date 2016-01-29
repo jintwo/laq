@@ -665,7 +665,7 @@ int main(int argc, char **argv) {
         }
         init_lua_cb_script(&cb, opts->param);
     }
-    read_file_with_callback(opts->input, &field_printer, &cb, opts->count);
+    read_file_with_callback(opts->input, &lua_script, &cb, opts->count);
 
     free_lua_cb(&cb);
     free_options(opts);

@@ -35,7 +35,7 @@ make
 
 ```bash
 # dump whole file
-./laq -i *.var -c cat
+./laq -i *.avro -c cat
 ```
 
 ## field printer

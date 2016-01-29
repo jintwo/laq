@@ -19,23 +19,28 @@ make
 ## inline lua
 
 ```bash
-./laq -i AVROFILE -c lua_inline -p "SCRIPT_BODY"
+# print only fiel0.field1 of first record from *.avro
+./laq -i *.avro -c lua_inline -p "print(r.field0.field1)" -n 1
 ```
 
 ## lua script
 
 ```bash
-./laq -i AVROFILE -c lua_script -p PATH_TO_SCRIPT
+# print only field0.field1 of each record from *.avro
+# script.lua: return function(r) print(r.field0.field1) end
+./laq -i *.avro -c lua_script -p script.lua
 ```
 
 ## dump
 
 ```bash
-./laq -i AVROFILE -c cat
+# dump whole file
+./laq -i *.var -c cat
 ```
 
 ## field printer (works only on OSX)
 
 ```bash
-./laq -i AVROFILE -c field_print -p "path.to.field"
+# print only field0.field1 of each record from *.avro
+./laq -i AVROFILE -c field_print -p "field0.field1"
 ```

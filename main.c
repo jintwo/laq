@@ -248,7 +248,7 @@ void print_avro_value(avro_value_t *value, int indent) {
 
     case AVRO_NULL:
     {
-        printf("null");
+        printf("<null>");
         break;
     }
 
@@ -306,11 +306,7 @@ void print_avro_value(avro_value_t *value, int indent) {
     {
         avro_value_t branch;
         avro_value_get_current_branch(value, &branch);
-        if (avro_value_get_type(&branch) == AVRO_NULL) {
-            printf("null");
-        } else {
-            print_avro_value(&branch, indent);
-        }
+        print_avro_value(&branch, indent);
         break;
     }
     }

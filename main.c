@@ -243,33 +243,182 @@ void dump_avro_value(avro_value_t value, void *ignored) {
     free(strval);
 }
 
-#ifdef WITH_PARSON
-void field_printer(avro_value_t record, char *field_name) {
-    JSON_Value *val = value_to_json(record);
-    JSON_Object *obj = json_value_get_object(val);
-    JSON_Value *result = json_object_dotget_value(obj, field_name);
-    switch (json_type(result)) {
-    case JSONString:
-        printf("%s: %s\n", field_name, json_string(result));
-        break;
-    case JSONObject:
-        printf("%s: %s\n", field_name, json_serialize_to_string_pretty(result));
-        break;
-    case JSONNumber:
-        printf("%s: %f\n", field_name, json_number(result));
-        break;
-    default:
-        printf("%s: unknown type\n", field_name);
+void print_indent(int indent) {
+    for (int i = 0; i < indent; i++) {
+        printf(" ");
     }
-    json_value_free(val);
 }
-#else
-void field_printer(avro_value_t record, char *field_name) {
-    json_t *val = value_to_json(record);
-    printf("%s: Not implemented\n", field_name);
-    json_decref(val);
+
+void print_avro_value(avro_value_t *value, int indent) {
+    switch (avro_value_get_type(value)) {
+    case AVRO_BOOLEAN:
+    {
+        int val = 0;
+        avro_value_get_boolean(value, &val);
+        printf(val ? "true" : "false");
+        break;
+    }
+
+    case AVRO_INT64:
+    case AVRO_INT32:
+    case AVRO_FLOAT:
+    case AVRO_DOUBLE:
+    {
+        double val = 0;
+        avro_value_get_double(value, &val);
+        printf("%g");
+        break;
+    }
+
+    case AVRO_NULL:
+    {
+        printf("null");
+        break;
+    }
+
+    case AVRO_BYTES:
+    {
+        const char *val = NULL;
+        size_t size = 0;
+        avro_value_get_bytes(value, &val, &size);
+        printf("%s", val);
+        break;
+    }
+
+    case AVRO_STRING:
+    {
+        const char *val = NULL;
+        size_t size = 0;
+        avro_value_get_string(value, &val, &size);
+        printf("%s", val);
+        break;
+    }
+
+    case AVRO_ENUM:
+    case AVRO_FIXED:
+    {
+        printf("unsupported type");
+        break;
+    }
+
+    case AVRO_ARRAY:
+    case AVRO_MAP:
+    case AVRO_RECORD:
+    {
+        size_t field_count = 0;
+        avro_value_get_size(value, &field_count);
+
+        printf("{\n");
+        for (int i = 0; i < field_count; i++) {
+            const char *field_name = NULL;
+            avro_value_t field;
+            avro_value_get_by_index(value, i, &field, &field_name);
+            print_indent(indent + 1);
+            if (!field_name) {
+                printf("%g: ", i);
+            } else {
+                printf("%s: ", field_name);
+            }
+            print_avro_value(&field, indent + 1);
+            printf("\n");
+        }
+        print_indent(indent);
+        printf("}");
+        break;
+    }
+    case AVRO_UNION:
+    {
+        avro_value_t branch;
+        avro_value_get_current_branch(value, &branch);
+        if (avro_value_get_type(&branch) == AVRO_NULL) {
+            printf("null");
+        } else {
+            print_avro_value(&branch, indent);
+        }
+        break;
+    }
+    }
 }
-#endif
+
+void print_field(avro_value_t *record, char *field) {
+    if (!record) {
+        return;
+    }
+
+    if (!field || !strlen(field)) {
+        print_avro_value(record, 0);
+        return;
+    }
+
+    if (*field == ':' || *field == '.') {
+        field++;
+    }
+
+    avro_value_t *child = malloc(sizeof(avro_value_t*));
+    char *field_name;
+    size_t field_name_len = strlen(field);
+
+    char *delim = strchr(field, ':');
+    if (!delim) {
+        delim = strchr(field, '.');
+    }
+
+    if (delim) {
+        field_name_len = delim - field;
+    }
+
+    field_name = malloc(field_name_len + 1);
+    strncpy(field_name, field, field_name_len);
+    field_name[field_name_len] = 0;
+
+    if (avro_value_get_type(record) == AVRO_UNION) {
+        avro_value_t branch;
+        avro_value_get_current_branch(record, &branch);
+
+        if (avro_value_get_type(&branch) == NULL) {
+            printf("null branch\n");
+            free(field_name);
+            free(child);
+            return;
+        }
+
+        record = &branch;
+    }
+
+    if (isdigit(*field_name)) {
+        size_t size = 0;
+        avro_value_get_size(record, &size);
+        int index = atoi(field_name);
+
+        if (index > size - 1) {
+            printf("invalid array index\n");
+            free(field_name);
+            free(child);
+            return;
+        }
+
+        avro_value_get_by_index(record, index, child, NULL);
+    } else {
+        avro_value_get_by_name(record, field_name, child, NULL);
+    }
+
+    if (avro_value_get_type(child) != AVRO_NULL) {
+       print_field(child, delim);
+    }
+
+    free(field_name);
+    free(child);
+}
+
+void field_printer(avro_value_t record, char *field_names) {
+    char *field = strtok(field_names, ",");
+    while (field) {
+        print_field(&record, field);
+        printf("\t");
+        field = strtok(NULL, ",");
+    }
+    printf("\n");
+}
 
 void push_avro_value(lua_State *L, avro_value_t *value) {
     switch (avro_value_get_type(value)) {
@@ -337,15 +486,15 @@ void push_avro_value(lua_State *L, avro_value_t *value) {
         break;
     }
 
-    case AVRO_ARRAY:
     case AVRO_ENUM:
     case AVRO_FIXED:
-    case AVRO_MAP:
     {
         lua_pushstring(L, "unsupported type");
         break;
     }
 
+    case AVRO_MAP:
+    case AVRO_ARRAY:
     case AVRO_RECORD:
     {
         size_t field_count = 0;
@@ -356,7 +505,11 @@ void push_avro_value(lua_State *L, avro_value_t *value) {
             const char *field_name = NULL;
             avro_value_t field;
             avro_value_get_by_index(value, i, &field, &field_name);
-            lua_pushstring(L, field_name);
+            if (!field_name) {
+                lua_pushnumber(L, i);
+            } else {
+                lua_pushstring(L, field_name);
+            }
             push_avro_value(L, &field);
             lua_settable(L, -3);
         }
@@ -377,8 +530,6 @@ void push_avro_value(lua_State *L, avro_value_t *value) {
 }
 
 void lua_script(avro_value_t record, lua_callback *cb_data) {
-    // TODO: push avro record as lua table
-
     if (cb_data->type == LUA_CB_TYPE_INLINE) {
         push_avro_value(cb_data->L, &record);
         lua_setglobal(cb_data->L, "r");

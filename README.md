@@ -42,5 +42,5 @@ make
 
 ```bash
 # print only field0.field1 of each record from *.avro
-./laq -i AVROFILE -c field_print -p "field0.field1"
+./laq -i *.avro -c field_print -p "field0.field1"
 ```

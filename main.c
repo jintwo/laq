@@ -319,6 +319,14 @@ void push_avro_value(lua_State *L, avro_value_t *value) {
     }
 
     case AVRO_BYTES:
+    {
+        const char *val = NULL;
+        size_t size = 0;
+        avro_value_get_bytes(value, &val, &size);
+        lua_pushlstring(L, val, size);
+        break;
+    }
+
     case AVRO_STRING:
     {
         const char *val = NULL;

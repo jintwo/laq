@@ -17,12 +17,6 @@
 #include <lualib.h>
 #include <lauxlib.h>
 
-#ifdef WITH_PARSON
-#include <parson.h>
-#else
-#include <jansson.h>
-#endif
-
 #define CHUNK 10 * 1024 * 1024
 
 #define LUA_CB_TYPE_INLINE 0
@@ -70,25 +64,6 @@ void read_varint(avro_reader_t reader, int64_t *res)
     while (b & 0x80);
     *res = ((value >> 1) ^ -(value & 1));
 }
-
-#ifdef WITH_PARSON
-JSON_Value *value_to_json(avro_value_t value) {
-    char *strval = NULL;
-    avro_value_to_json(&value, 1, &strval);
-    JSON_Value *val = json_parse_string(strval);
-    free(strval);
-    return val;
-}
-#else
-json_t *value_to_json(avro_value_t value) {
-    char *strval = NULL;
-    avro_value_to_json(&value, 1, &strval);
-    json_error_t err;
-    json_t *val = json_loads(strval, 0, &err);
-    free(strval);
-    return val;
-}
-#endif
 
 int inflate_(const char *src, char *dst, size_t len, size_t *out_len) {
     int ret = 0;

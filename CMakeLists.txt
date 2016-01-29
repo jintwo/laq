@@ -3,7 +3,7 @@ project(laq)
 
 set(CMAKE_BUILD_TYPE Debug)
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c11")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c99")
 set(SOURCE_FILES main.c)
 set(LIBS luajit avro m z dl)
 set(VENDOR_PATH "${PROJECT_SOURCE_DIR}/vendor")
@@ -12,7 +12,6 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
   set(CMAKE_EXE_LINKER_FLAGS "-pagezero_size 10000 -image_base 100000000")
   # parson
   include_directories(${VENDOR_PATH}/parson)
-  add_definitions(-DWITH_PARSON)
 endif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
@@ -30,8 +29,12 @@ link_directories(${VENDOR_PATH}/avro/lang/c/lib)
 include_directories(${VENDOR_PATH}/LuaJIT-2.0.4/src)
 link_directories(${VENDOR_PATH}/LuaJIT-2.0.4/src)
 
-# parson
-add_library(parson OBJECT ${VENDOR_PATH}/parson/parson.c)
+if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+  # parson
+  add_library(parson OBJECT ${VENDOR_PATH}/parson/parson.c)
+  add_executable(laq ${SOURCE_FILES} $<TARGET_OBJECTS:parson>)
+else(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+  add_executable(laq ${SOURCE_FILES})
+endif(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
 
-add_executable(laq ${SOURCE_FILES} $<TARGET_OBJECTS:parson>)
 target_link_libraries(laq "${LIBS}")

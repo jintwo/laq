@@ -1,3 +1,4 @@
+#include <stdbool.h>
 #include <stdio.h>
 #include <getopt.h>
 #include <glob.h>
@@ -266,7 +267,7 @@ void print_avro_value(avro_value_t *value, int indent) {
     {
         double val = 0;
         avro_value_get_double(value, &val);
-        printf("%g");
+        printf("%g", val);
         break;
     }
 
@@ -278,7 +279,7 @@ void print_avro_value(avro_value_t *value, int indent) {
 
     case AVRO_BYTES:
     {
-        const char *val = NULL;
+        const void *val = NULL;
         size_t size = 0;
         avro_value_get_bytes(value, &val, &size);
         printf("%s", val);
@@ -315,7 +316,7 @@ void print_avro_value(avro_value_t *value, int indent) {
             avro_value_get_by_index(value, i, &field, &field_name);
             print_indent(indent + 1);
             if (!field_name) {
-                printf("%g: ", i);
+                printf("%d: ", i);
             } else {
                 printf("%s: ", field_name);
             }
@@ -355,7 +356,6 @@ void print_field(avro_value_t *record, char *field) {
     }
 
     avro_value_t *child = malloc(sizeof(avro_value_t*));
-    char *field_name;
     size_t field_name_len = strlen(field);
 
     char *delim = strchr(field, ':');
@@ -365,18 +365,20 @@ void print_field(avro_value_t *record, char *field) {
 
     if (delim) {
         field_name_len = delim - field;
+    } else {
+        field_name_len = strlen(field);
     }
 
-    field_name = malloc(field_name_len + 1);
-    strncpy(field_name, field, field_name_len);
+    char *field_name = malloc(field_name_len);
+    strcpy(field_name, field);
     field_name[field_name_len] = 0;
 
     if (avro_value_get_type(record) == AVRO_UNION) {
         avro_value_t branch;
         avro_value_get_current_branch(record, &branch);
 
-        if (avro_value_get_type(&branch) == NULL) {
-            printf("null branch\n");
+        if (avro_value_get_type(&branch) == AVRO_NULL) {
+            printf("<null branch>");
             free(field_name);
             free(child);
             return;
@@ -385,25 +387,39 @@ void print_field(avro_value_t *record, char *field) {
         record = &branch;
     }
 
+    size_t size = 0;
+    avro_value_get_size(record, &size);
     if (isdigit(*field_name)) {
-        size_t size = 0;
-        avro_value_get_size(record, &size);
         int index = atoi(field_name);
-
         if (index > size - 1) {
-            printf("invalid array index\n");
+            printf("<invalid array index>");
             free(field_name);
             free(child);
             return;
         }
-
         avro_value_get_by_index(record, index, child, NULL);
     } else {
-        avro_value_get_by_name(record, field_name, child, NULL);
+        int index = 0;
+        const char *f_name = NULL;
+        bool found = false;
+        for (int i = 0; i < size; i++) {
+            avro_value_get_by_index(record, i, child, &f_name);
+            if (strcmp(f_name, field_name) == 0) {
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            printf("<field not found>");
+            free(field_name);
+            free(child);
+            return;
+        }
     }
 
     if (avro_value_get_type(child) != AVRO_NULL) {
-       print_field(child, delim);
+        print_field(child, delim);
     }
 
     free(field_name);
@@ -411,7 +427,9 @@ void print_field(avro_value_t *record, char *field) {
 }
 
 void field_printer(avro_value_t record, char *field_names) {
-    char *field = strtok(field_names, ",");
+    char names[strlen(field_names)];
+    strcpy(names, field_names);
+    char *field = strtok(names, ",");
     while (field) {
         print_field(&record, field);
         printf("\t");
@@ -470,7 +488,7 @@ void push_avro_value(lua_State *L, avro_value_t *value) {
 
     case AVRO_BYTES:
     {
-        const char *val = NULL;
+        const void *val = NULL;
         size_t size = 0;
         avro_value_get_bytes(value, &val, &size);
         lua_pushlstring(L, val, size);
@@ -612,6 +630,17 @@ int parse_opts(int argc, char **argv, options *opts) {
     return 0;
 }
 
+void read_file_with_callback(char *input, record_cb handler, void *user_data, int count) {
+    glob_t glob_results;
+    glob(input, GLOB_TILDE, NULL, &glob_results);
+
+    for (int i = 0; i < glob_results.gl_pathc; ++i) {
+        char *p = glob_results.gl_pathv[i];
+        printf("--- [%d] %s ---\n", i, p);
+        read_avro_file2(p, handler, user_data, count);
+    }
+}
+
 int main(int argc, char **argv) {
     options *opts = new_options();
 
@@ -629,38 +658,39 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    record_cb *handler = NULL;
+    void *user_data = NULL;
+
     if (strcmp(opts->handler, "cat") == 0) {
-        read_avro_file2(opts->input, &dump_avro_value, NULL, opts->count);
+        read_file_with_callback(opts->input, &dump_avro_value, NULL, opts->count);
+        free_options(opts);
         return 0;
     }
 
     if (!opts->param) {
         puts("invalid handler param.");
+        free_options(opts);
         return 1;
     }
 
     if (strcmp(opts->handler, "field_print") == 0) {
-        read_avro_file2(opts->input, &field_printer, opts->param, opts->count);
+        read_file_with_callback(opts->input, &field_printer, opts->param, opts->count);
+        free_options(opts);
         return 0;
     }
 
     lua_callback cb;
     if (strcmp(opts->handler, "lua_inline") == 0) {
         init_lua_cb_inline(&cb, opts->param);
-    } else if (strcmp(opts->handler, "lua_script") == 0) {
+    } else {
         if (access(opts->param, F_OK) == -1) {
             puts("invalid lua script file.");
+            free_options(opts);
             return 1;
         }
         init_lua_cb_script(&cb, opts->param);
     }
-
-    glob_t glob_results;
-    glob(opts->input, GLOB_NOCHECK, 0, &glob_results);
-
-    for (char **p = glob_results.gl_pathv, c = glob_results.gl_pathc; c; p++, c--) {
-        read_avro_file2(*p, &lua_script, &cb, opts->count);
-    }
+    read_file_with_callback(opts->input, &field_printer, &cb, opts->count);
 
     free_lua_cb(&cb);
     free_options(opts);

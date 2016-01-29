@@ -3,7 +3,7 @@ project(laq)
 
 set(CMAKE_BUILD_TYPE Debug)
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c99")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c11")
 set(SOURCE_FILES main.c)
 set(LIBS luajit avro m z dl)
 set(VENDOR_PATH "${PROJECT_SOURCE_DIR}/vendor")

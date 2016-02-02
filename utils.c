@@ -368,7 +368,7 @@ void read_avro_file_custom(const char *filename, record_func callback, void *use
     // read header
     avro_read(reader, magic, sizeof(magic));
     if (magic[0] != 'O' || magic[1] != 'b' || magic[2] != 'j' || magic[3] != 1) {
-        fprintf(stderr, "Error: invalid magic\n");
+        fprintf(stderr, "Invalid magic.\n");
         exit(1);
     }
 

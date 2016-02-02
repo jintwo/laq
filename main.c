@@ -80,6 +80,7 @@ void cleanup_job(uv_work_t *req, int status) {
     }
     avro_value_decref(job->value);
     free(job->value);
+    free(job->user_data);
     free(job);
 }
 
@@ -122,9 +123,7 @@ void dump_avro_value_mt(avro_value_t *value, void *reserved) {
 }
 
 void field_printer(avro_value_t *value, char *field_names) {
-    char names[strlen(field_names)];
-    strcpy(names, field_names);
-    char *field = strtok(names, ",");
+    char *field = strtok(field_names, ",");
     while (field) {
         print_field(value, field);
         printf("\t");
@@ -145,7 +144,8 @@ void field_printer_mt(avro_value_t *value, char *field_names) {
     job->callback = (record_func)field_printer;
 
     // set user data
-    job->user_data = field_names;
+    // TODO: cleanup
+    job->user_data = strdup(field_names);
 
     // set avro value
     job->value = malloc(sizeof(avro_value_t));
@@ -179,10 +179,16 @@ void lua_script_wrapper(avro_value_t *record, lua_cb_user_data_t *lua_cb_data) {
         lua_script_handler(record, lua_cb_data->L, lua_cb_data->cb_ref);
         break;
     default:
-        fprintf(stderr, "Invalid LUA handler type\n");
+        fprintf(stderr, "Invalid LUA handler type.\n");
     }
 }
 // end of callbacks
+
+typedef struct read_file_callback {
+    char *input;
+    record_func callback;
+    void *user_data;
+} read_file_callback_t;
 
 void read_file_with_callback(char *input, record_func callback, void *user_data) {
     glob_t glob_results;
@@ -196,6 +202,10 @@ void read_file_with_callback(char *input, record_func callback, void *user_data)
     }
 }
 
+void read_file_with_callback_wrapper(read_file_callback_t *cb_data) {
+    read_file_with_callback(cb_data->input, cb_data->callback, cb_data->user_data);
+}
+
 int main(int argc, char **argv) {
     loop = uv_default_loop();
 
@@ -206,13 +216,13 @@ int main(int argc, char **argv) {
     }
 
     if (!options->input) {
-        puts("invalid avro filename.");
+        fprintf(stderr, "Invalid avro filename.\n");
         free_options(options);
         return 1;
     }
 
     if (!options->handler) {
-        puts("invalid handler.");
+        fprintf(stderr, "Invalid handler.\n");
         free_options(options);
         return 1;
     }
@@ -244,8 +254,21 @@ int main(int argc, char **argv) {
     // start event loop
     uv_run(loop, UV_RUN_DEFAULT);
 
-    read_file_with_callback(options->input, dump_avro_value_mt, NULL);
-    /* read_file_with_callback(options->input, (record_func)field_printer_mt, "datetime"); */
+    /* lua_cb_user_data_t lua_cb_data; */
+    /* init_lua_cb_inline(&lua_cb_data, options->param); */
+
+    read_file_callback_t cb_data = {
+        .input = options->input,
+        /* .callback = (record_func)lua_script_wrapper, */
+        /* .callback = (record_func)dump_avro_value_mt, */
+        .callback = (record_func)field_printer_mt,
+        .user_data = options->param
+        /* .user_data = &lua_cb_data */
+    };
+
+    uv_thread_t reader;
+    uv_thread_create(&reader, (uv_thread_cb)read_file_with_callback_wrapper, &cb_data);
+    uv_thread_join(&reader);
 
     free_options(options);
     return 0;

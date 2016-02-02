@@ -6,6 +6,7 @@ tar zxvf LuaJIT-2.0.4.tar.gz
 rm LuaJIT-2.0.4.tar.gz
 git clone https://github.com/apache/avro.git
 git clone https://github.com/kgabis/parson.git
+git clone https://github.com/libuv/libuv.git
 popd
 pushd vendor/LuaJIT-2.0.4 ; make clean ; make ; popd
 pushd vendor/avro ; patch -p1 < ../../avrolib.patch ; popd

@@ -90,7 +90,7 @@ void execute_job(uv_work_t *req) {
 }
 
 void enqueue_job(worker_data_t *job) {
-    uv_queue_work(uv_default_loop(), &job->req, execute_job, cleanup_job);
+    uv_queue_work(loop, &job->req, execute_job, cleanup_job);
 }
 
 // callbacks
@@ -125,7 +125,7 @@ void dump_avro_value_mt(avro_value_t *value, void *reserved) {
 void field_printer(avro_value_t *value, char *field_names) {
     char *field = strtok(field_names, ",");
     while (field) {
-        print_field(value, field);
+        print_field(value, strdup(field));
         printf("\t");
         field = strtok(NULL, ",");
     }
@@ -227,44 +227,43 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* record_func callback; */
-    /* if (strcmp(options->handler, "cat") == 0) { */
-    /*     callback.cb_type = CB_TYPE_CAT; */
-    /*     callback.handler = &dump_avro_value; */
-    /* } else if (strcmp(options->handler, "field_print") == 0) { */
-    /*     callback.cb_type = CB_TYPE_FIELD_PRINT; */
-    /*     callback.handler = &field_printer; */
-    /*     callback.user_data = options->param; */
-    /* } else { */
-    /*     callback.handler = &lua_script; */
-    /*     if (strcmp(options->handler, "lua_inline") == 0) { */
-    /*         callback.cb_type = CB_TYPE_LUA_INLINE; */
-    /*     } else { */
-    /*         callback.cb_type = CB_TYPE_LUA_SCRIPT; */
-    /*         if (access(options->param, F_OK) == -1) { */
-    /*             puts("invalid lua script file."); */
-    /*             uv_loop_close(loop); */
-    /*             free(loop); */
-    /*             free_options(options); */
-    /*             return 1; */
-    /*         } */
-    /*     } */
-    /* } */
+    read_file_callback_t cb_data;
+
+    if (strcmp(options->handler, "cat") == 0) {
+        cb_data = (read_file_callback_t) {
+            .input = options->input,
+            .callback = (record_func)dump_avro_value_mt,
+            .user_data = NULL
+        };
+    } else if (strcmp(options->handler, "field_print") == 0) {
+        cb_data = (read_file_callback_t) {
+            .input = options->input,
+            .callback = (record_func)field_printer_mt,
+            .user_data = options->param
+        };
+    } else {
+        lua_cb_user_data_t lua_cb_data;
+        if (strcmp(options->handler, "lua_inline") == 0) {
+            init_lua_cb_inline(&lua_cb_data, options->param);
+        } else if (strcmp(options->handler, "lua_script") == 0) {
+            if (access(options->param, F_OK) == -1) {
+                puts("invalid lua script file.");
+                uv_loop_close(loop);
+                free(loop);
+                free_options(options);
+                return 1;
+            }
+            init_lua_cb_script(&lua_cb_data, options->param);
+        }
+        cb_data = (read_file_callback_t) {
+            .input = options->input,
+            .callback = (record_func)lua_script_wrapper,
+            .user_data = &lua_cb_data
+        };
+    }
 
     // start event loop
     uv_run(loop, UV_RUN_DEFAULT);
-
-    /* lua_cb_user_data_t lua_cb_data; */
-    /* init_lua_cb_inline(&lua_cb_data, options->param); */
-
-    read_file_callback_t cb_data = {
-        .input = options->input,
-        /* .callback = (record_func)lua_script_wrapper, */
-        /* .callback = (record_func)dump_avro_value_mt, */
-        .callback = (record_func)field_printer_mt,
-        .user_data = options->param
-        /* .user_data = &lua_cb_data */
-    };
 
     uv_thread_t reader;
     uv_thread_create(&reader, (uv_thread_cb)read_file_with_callback_wrapper, &cb_data);

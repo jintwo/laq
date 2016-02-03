@@ -256,21 +256,20 @@ void print_field(avro_value_t *record, char *field) {
     }
 
     avro_value_t *child = malloc(sizeof(avro_value_t*));
-    size_t field_name_len = strlen(field);
 
     char *delim = strchr(field, ':');
     if (!delim) {
         delim = strchr(field, '.');
     }
 
+    size_t field_name_len = strlen(field);
+
     if (delim) {
         field_name_len = delim - field;
-    } else {
-        field_name_len = strlen(field);
     }
 
-    char *field_name = malloc(field_name_len);
-    strcpy(field_name, field);
+    char *field_name = malloc(field_name_len + 1);
+    strncpy(field_name, field, field_name_len);
     field_name[field_name_len] = 0;
 
     if (avro_value_get_type(record) == AVRO_UNION) {
@@ -299,7 +298,6 @@ void print_field(avro_value_t *record, char *field) {
         }
         avro_value_get_by_index(record, index, child, NULL);
     } else {
-        int index = 0;
         const char *f_name = NULL;
         bool found = false;
         for (int i = 0; i < size; i++) {

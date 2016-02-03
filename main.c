@@ -157,7 +157,6 @@ void field_printer_mt(avro_value_t *value, char *field_names) {
     enqueue_job(job);
 }
 
-
 void lua_inline_handler(avro_value_t *record, lua_State *L, char *script) {
     push_avro_value(L, record);
     lua_setglobal(L, "r");

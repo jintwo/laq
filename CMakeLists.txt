@@ -26,8 +26,8 @@ include_directories(${VENDOR_PATH}/avro/lang/c/include)
 link_directories(${VENDOR_PATH}/avro/lang/c/lib)
 
 # luajit
-include_directories(${VENDOR_PATH}/LuaJIT-2.0.4/src)
-link_directories(${VENDOR_PATH}/LuaJIT-2.0.4/src)
+include_directories(${VENDOR_PATH}/luajit/src)
+link_directories(${VENDOR_PATH}/luajit/src)
 
 # uv
 include_directories(${VENDOR_PATH}/libuv/include)

@@ -44,3 +44,8 @@ make
 # print "field0.field1<TAB>field0.field2[1]" of each record from *.avro
 ./laq -i "*.avro" -c field_print -p "field0.field1,field0.field2.1"
 ```
+
+# TODO
+
+[ ] add dependencies as submodules
+[ ] multithreaded lua handler (each thread has own lua state)

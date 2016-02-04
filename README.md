@@ -47,5 +47,5 @@ make
 
 # TODO
 
-[ ] add dependencies as submodules
-[ ] multithreaded lua handler (each thread has own lua state)
+- [ ] add dependencies as submodules
+- [ ] multithreaded lua handler (each thread has own lua state)

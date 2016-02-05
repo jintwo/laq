@@ -4,6 +4,7 @@ laq
 # compile:
 
 ```bash
+git submodule update --init
 ./build.sh
 cmake .
 make
